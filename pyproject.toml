@@ -1,0 +1,35 @@
+[project]
+name = "langgraph-checkpoint-kurrentdb"
+version = "0.1.0"
+description = "KurrentDB checkpoint implementation for LangGraph"
+authors = [
+    {name = "Lougarou",email = "yogisawesome@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "langgraph>=0.0.15",
+    "langchain-core>=0.1.0",
+    "kurrentdbclient",
+    "pandas>=2.0.0",
+    "matplotlib>=3.0.0",
+    "pytest (>=8.3.5,<9.0.0)",
+]
+
+[tool.poetry]
+packages = [{include = "langgraph_checkpoint_kurrentdb", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.dependencies]
+langgraph-checkpoint = "^2.0.15"
+kurrentdbclient = "^0.4.0"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+]
