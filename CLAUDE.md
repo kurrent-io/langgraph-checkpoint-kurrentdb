@@ -4,9 +4,16 @@
 - Run all tests: `poetry run pytest`
 - Run a specific test: `poetry run pytest tests/test_sync.py::test_function_name -v`
 - Run tests with async support: `poetry run pytest --asyncio-mode=auto`
+- Run tests with coverage: `poetry run pytest --cov=src/`
 - Install project: `poetry install`
 - Install with dev dependencies: `poetry install --with dev`
 - Type check: `poetry run mypy src/ tests/`
+
+## Test Organization
+- **test_sync.py**: Basic synchronous functionality tests
+- **test_advanced.py**: Tests for complex operations, advanced features, and async methods
+- **test_persistence.py**: Tests for data persistence, multiple threads/namespaces, and state continuity
+- **test_error_handling.py**: Tests for error conditions, exception handling, and edge cases
 
 ## Code Style Guidelines
 - **Imports**: Group imports by stdlib, third-party, and local modules with a blank line between groups
