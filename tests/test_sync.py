@@ -5,11 +5,11 @@ from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient
 
 # Fixtures
 @pytest.fixture
-def client():
+def client(kurrentdb_container):
     return KurrentDBClient(uri="esdb://localhost:2113?Tls=false")
 
 @pytest.fixture
-def async_client():
+def async_client(kurrentdb_container):
     return AsyncKurrentDBClient(uri="esdb://localhost:2113?Tls=false")
 
 @pytest.fixture

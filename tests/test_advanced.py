@@ -7,12 +7,14 @@ from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient, exceptions
 
 # Fixtures
 @pytest.fixture
-def client():
+def client(kurrentdb_container):
     return KurrentDBClient(uri="esdb://localhost:2113?Tls=false")
 
 @pytest.fixture
-def async_client():
-    return AsyncKurrentDBClient(uri="esdb://localhost:2113?Tls=false")
+def async_client(kurrentdb_container):
+    client = AsyncKurrentDBClient(uri="esdb://localhost:2113?Tls=false")
+    client.connect().__await__();
+    return client
 
 @pytest.fixture
 def memory_saver(client, async_client):
@@ -251,3 +253,4 @@ async def test_async_graph_execution(memory_saver, base_config):
     config_with_id = base_config.copy()
     checkpoint_tuple = await memory_saver.aget_tuple(config_with_id)
     assert checkpoint_tuple is not None
+
