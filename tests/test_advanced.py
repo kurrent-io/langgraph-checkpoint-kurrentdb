@@ -42,7 +42,7 @@ def test_put_writes(memory_saver, base_config):
     # Prepare test data
     writes = [
         ("channel1", "value1"),
-        ("channel2", {"complex": "value", "nested": {"data": 42}}),
+        ("channel2", {"complex": "value", "nested": {"data": 33}}),
         ("channel3", [1, 2, 3, 4, 5])
     ]
     task_id = "test_task_id"
