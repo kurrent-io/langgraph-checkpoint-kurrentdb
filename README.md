@@ -44,4 +44,9 @@ result = graph.invoke(42, config)
 
 # Later, retrieve the state
 state = graph.get_state(config)
+
+# Get the trace
+df = saver.trace(config["configurable"]["thread_id"])
+print(df)
+
 ```
