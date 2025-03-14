@@ -4,7 +4,7 @@ import pytest
 from typing import Generator
 import docker
 from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient
-
+import platform
 @pytest.fixture(scope="session")
 def kurrentdb_container() -> Generator[None, None, None]:
 
@@ -16,7 +16,13 @@ def kurrentdb_container() -> Generator[None, None, None]:
 
     """
     print("Starting KurrentDB container")
-    client = docker.DockerClient(base_url="tcp://localhost:2375")
+    if platform.system() == "Windows":
+        client = docker.DockerClient(base_url="tcp://localhost:2375")
+    elif platform.system() == "Linux" or platform.system() == "Darwin":
+        client = docker.DockerClient(base_url="unix://var/run/docker.sock")
+    else:
+        raise Exception("Unsupported platform")
+        
     print(client.version())
 
     # Container name
