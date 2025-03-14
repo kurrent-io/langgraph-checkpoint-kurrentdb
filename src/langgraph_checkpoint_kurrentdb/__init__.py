@@ -54,7 +54,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         self.writes = factory(dict)
 
     def get_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
-        print("Getting tuple")
         if self.client is None:
             raise Exception("Synchronous Client is required.")
         checkpoint_id = get_checkpoint_id(config)
@@ -118,7 +117,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         before: Optional[RunnableConfig] = None,
         limit: Optional[int] = None,
     ) -> Iterator[CheckpointTuple]:
-        print("Getting list")
         if self.client is None:
             raise Exception("Synchronous Client is required.")
 
@@ -202,7 +200,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        print("putting")
         """
         Store a checkpoint with its configuration and metadata.
         """
@@ -218,8 +215,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         checkpoint_ns = config["configurable"]["checkpoint_ns"]
         serialized_checkpoint = self.jsonplus_serde.dumps(c)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
-        print("serialized_checkpoint", serialized_checkpoint)
-        print("serialized_metadata", serialized_metadata)
+
         checkpoint_event = NewEvent(
             type="langgraph_checkpoint",
             data=serialized_checkpoint,
@@ -247,7 +243,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        print("pending writes")
         """
         Pending write are done in memory
         """
@@ -436,8 +431,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         checkpoint_ns = config["configurable"]["checkpoint_ns"]
         serialized_checkpoint = self.jsonplus_serde.dumps(c)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
-        print("serialized_checkpoint", serialized_checkpoint)
-        print("serialized_metadata", serialized_metadata)
         checkpoint_event = NewEvent(
             type="langgraph_checkpoint",
             data=serialized_checkpoint,
