@@ -3,6 +3,7 @@ import requests
 import pytest
 from typing import Generator
 import docker
+from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient
 
 @pytest.fixture(scope="session")
 def kurrentdb_container() -> Generator[None, None, None]:
@@ -86,4 +87,13 @@ def kurrentdb_container() -> Generator[None, None, None]:
     
     # Stop and remove container after tests
     print("Stopping KurrentDB container")
+    input("Press Enter to continue...")
     container.stop()
+
+@pytest.fixture(scope="session")
+def client():
+    return KurrentDBClient(uri="esdb://localhost:2113?Tls=false")
+
+@pytest.fixture(scope="session")
+def async_client():
+    return AsyncKurrentDBClient(uri="esdb://localhost:2113?Tls=false")

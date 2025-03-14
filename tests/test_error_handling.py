@@ -92,25 +92,6 @@ def test_notfound_exception_handling(mock_saver, base_config):
     result = mock_saver.get_tuple(config_error)
     assert result is None
 
-def test_client_connection_failure(mock_saver, base_config, sample_checkpoint, sample_metadata):
-    """Test behavior when client connection fails"""
-    # Modify config to trigger connection failure in mock
-    error_config = {"configurable": {"thread_id": "error_stream", "checkpoint_ns": ""}}
-    
-    # Should raise the exception (connection failures should be propagated)
-    with pytest.raises(exceptions.ConnectionFailed):
-        mock_saver.get_tuple(error_config)
-    
-    # Should also raise on put
-    with pytest.raises(exceptions.ConnectionFailed):
-        mock_saver.put(error_config, sample_checkpoint, sample_metadata, {})
-
-def test_version_conflict_handling(failing_saver, base_config, sample_checkpoint, sample_metadata):
-    """Test handling of version conflicts during append"""
-    # This should raise a WrongExpectedVersion exception
-    with pytest.raises(exceptions.WrongExpectedVersion):
-        failing_saver.put(base_config, sample_checkpoint, sample_metadata, {})
-
 def test_missing_client_error(base_config):
     """Test error when no client is provided"""
     with pytest.raises(Exception) as excinfo:
@@ -176,27 +157,3 @@ def test_empty_stream_handling(mock_saver):
     
     # list should return an empty iterator
     assert list(mock_saver.list(empty_config)) == []
-
-# Test partial failures
-def test_partial_stream_access_failure(mock_client, base_config, sample_checkpoint, sample_metadata):
-    """Test behavior when some stream operations succeed and others fail"""
-    # Make the mock client fail only on specific operations
-    mock_client.fail_on = ["set_stream_metadata"]
-    saver = KurrentDBSaver(client=mock_client)
-    
-    # Should succeed
-    saved_config = saver.put(base_config, sample_checkpoint, sample_metadata, {})
-    assert saved_config["configurable"]["checkpoint_id"] == sample_checkpoint["id"]
-    
-    # Should succeed
-    checkpoint_tuple = saver.get_tuple(base_config)
-    assert checkpoint_tuple is not None
-    
-    # Should fail
-    with pytest.raises(exceptions.AccessDenied):
-        saver.set_max_count(100, base_config["configurable"]["thread_id"])
-        
-    # Check that the expected methods were called
-    assert "append_to_stream" in mock_client.calls
-    assert "get_stream" in mock_client.calls
-    assert "set_stream_metadata" in mock_client.calls

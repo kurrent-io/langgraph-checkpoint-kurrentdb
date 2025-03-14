@@ -3,16 +3,9 @@ import time
 from datetime import datetime
 from langgraph.graph import StateGraph
 from langgraph_checkpoint_kurrentdb import KurrentDBSaver
-from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient
+
 
 # Fixtures
-@pytest.fixture
-def client():
-    return KurrentDBClient(uri="esdb://localhost:2113?Tls=false")
-
-@pytest.fixture
-def async_client():
-    return AsyncKurrentDBClient(uri="esdb://localhost:2113?Tls=false")
 
 @pytest.fixture
 def memory_saver(client, async_client):

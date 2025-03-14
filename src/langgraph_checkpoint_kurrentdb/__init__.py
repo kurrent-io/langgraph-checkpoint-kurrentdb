@@ -2,7 +2,6 @@ from langgraph.graph import StateGraph
 import random
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, Optional, Sequence, Tuple
-import asyncio
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.serde.types import ChannelProtocol
@@ -58,7 +57,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         print("Getting tuple")
         if self.client is None:
             raise Exception("Synchronous Client is required.")
-        checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = get_checkpoint_id(config)
         thread_id = config["configurable"]["thread_id"]
         try:
@@ -70,17 +68,20 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         except exceptions.NotFound as e:
             return None #no checkpoint found
         for event in checkpoints_events:
-
             checkpoint = self.jsonplus_serde.loads(event.data)
             metadata = self.jsonplus_serde.loads(event.metadata)
-            writes = self.writes[(thread_id, checkpoint["checkpoint_ns"], checkpoint['id'])].values()
-            parent_checkpoint_id = checkpoint["checkpoint_ns"]
+            parent_checkpoint_id = ""
+            if "checkpoint_ns" in checkpoint and checkpoint["checkpoint_ns"] is not None:
+                parent_checkpoint_id = checkpoint["checkpoint_ns"]
+            writes = self.writes[(thread_id, parent_checkpoint_id, checkpoint['id'])].values()
+            sends = [] #TODO: implement sends
+            checkpoint["pending_sends"] = sends
             if checkpoint_id is None: #just return latest checkpoint
                 return CheckpointTuple(
                 {
                     "configurable": {
                         "thread_id": thread_id,
-                        "checkpoint_ns": checkpoint_ns,
+                        "checkpoint_ns": parent_checkpoint_id,
                         "checkpoint_id": checkpoint["id"],
                     }
                 },
@@ -94,7 +95,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 {
                     "configurable": {
                         "thread_id": thread_id,
-                        "checkpoint_ns": checkpoint_ns,
+                        "checkpoint_ns": parent_checkpoint_id,
                         "checkpoint_id": checkpoint["id"],
                     }
                 },
@@ -138,31 +139,38 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
 
             parent_checkpoint_id = None
             checkpoint_ns = None
-            if "checkpoint_ns" in checkpoint and checkpoint["checkpoint_ns"] is not None\
-                    and config is not None and "configurable" in config and "checkpoint_ns" in config["configurable"]:
-                if checkpoint["checkpoint_ns"] != config["configurable"]["checkpoint_ns"]:
-                    continue
-                else:
-                    parent_checkpoint_id = checkpoint["checkpoint_ns"]
+            if "checkpoint_ns" in checkpoint and checkpoint["checkpoint_ns"] is not None:
+                checkpoint_ns = checkpoint["checkpoint_ns"]
+                if config is not None and "configurable" in config and "checkpoint_ns" in config["configurable"]:
+                    if checkpoint["checkpoint_ns"] != config["configurable"]["checkpoint_ns"]:
+                        continue
+                    else:
+                        parent_checkpoint_id = checkpoint["checkpoint_ns"]
 
             # limit search results
             if limit is not None and limit <= 0:
                 break
             elif limit is not None:
                 limit -= 1
-
+            writes = self.writes[
+                        (thread_id, checkpoint_ns, checkpoint['id'])
+                    ].values()
+            sends = [] #TODO: implement sends
+            checkpoint["pending_sends"] = sends
             yield CheckpointTuple(
                 {
                     "configurable": {
                         "thread_id": thread_id,
-                        "checkpoint_ns": checkpoint["checkpoint_ns"],
+                        "checkpoint_ns": checkpoint_ns,
                         "checkpoint_id": checkpoint['id'],
                     }
                 },
                 checkpoint,
                 metadata,
-                None, #TODO: need to implement pending writes
-                None, #TODO: need to implement parent checkpoint
+                parent_config=parent_checkpoint_id, 
+                pending_writes=[
+                    (id, c, self.serde.loads_typed(v)) for id, c, v, _ in writes
+                ],
             )
 
     def put(
@@ -178,15 +186,13 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         """
         if self.client is None:
             raise Exception("Synchronous Client is required.")
-        # c = checkpoint.copy()
-        # c.pop("pending_sends")  # type: ignore[misc]
-
+        
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"]["checkpoint_ns"]
-        checkpoint["checkpoint_ns"] = checkpoint_ns
         serialized_checkpoint = self.jsonplus_serde.dumps(checkpoint)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
-
+        print("serialized_checkpoint", serialized_checkpoint)
+        print("serialized_metadata", serialized_metadata)
         checkpoint_event = NewEvent(
             type="langgraph_checkpoint",
             data=serialized_checkpoint,
