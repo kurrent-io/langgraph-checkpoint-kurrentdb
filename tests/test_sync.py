@@ -44,6 +44,8 @@ def test_put_and_list_checkpoints(memory_saver, base_config):
     assert saved_config["configurable"]["thread_id"] == "1"
     assert saved_config["configurable"]["checkpoint_id"] == "1ef4f797-8335-6428-8001-8a1503f9b875"
     assert saved_config["configurable"]["checkpoint_ns"] == ""
+    import time 
+    time.sleep(5)
     checkpoints = list(memory_saver.list(base_config))
     assert isinstance(checkpoints, list)
     # Add more specific assertions based on expected checkpoint structure
@@ -109,7 +111,6 @@ def test_simple_graph_execution(memory_saver, base_config):
     assert final_state[0] == 4  # Check final value after add_one
 
 def test_subgraph_execution(memory_saver, base_config):
-
     config = {"configurable": {"thread_id": "subgraph-execution-test"}}
     # Main graph
     builder = StateGraph(int)
@@ -132,7 +133,6 @@ def test_subgraph_execution(memory_saver, base_config):
     # Test execution
     result = graph.invoke(3, config)
     assert result == 6  # 3 + 1 + 2 = 6
-
 
     # Test state history
     state_history = list(graph.get_state_history(config))
