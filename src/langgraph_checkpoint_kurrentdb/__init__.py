@@ -2,10 +2,9 @@ from langgraph.graph import StateGraph
 import random
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, Optional, Sequence, Tuple
-import asyncio
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-from langgraph.checkpoint.serde.types import ChannelProtocol
+from langgraph.checkpoint.serde.types import ChannelProtocol, TASKS
 from langgraph.checkpoint.base import (
     WRITES_IDX_MAP,
     BaseCheckpointSaver,
@@ -58,7 +57,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         print("Getting tuple")
         if self.client is None:
             raise Exception("Synchronous Client is required.")
-        checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = get_checkpoint_id(config)
         thread_id = config["configurable"]["thread_id"]
         try:
@@ -70,12 +68,33 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         except exceptions.NotFound as e:
             return None #no checkpoint found
         for event in checkpoints_events:
-
             checkpoint = self.jsonplus_serde.loads(event.data)
             metadata = self.jsonplus_serde.loads(event.metadata)
-            writes = self.writes[(thread_id, checkpoint["checkpoint_ns"], checkpoint['id'])].values()
-            parent_checkpoint_id = checkpoint["checkpoint_ns"]
-            if checkpoint_id is None: #just return latest checkpoint
+            parent_checkpoint_id = ""
+            checkpoint_ns = ""
+            if "checkpoint_ns" in metadata:
+                checkpoint_ns = metadata["checkpoint_ns"]
+            if "parents" in metadata:
+                if checkpoint_ns in metadata["parents"]:
+                    parent_checkpoint_id = metadata["parents"][checkpoint_ns] 
+                    # https://github.com/langchain-ai/langgraph/blob/e757a800019f6f943a78856cbe64fe1e3be4d32d/libs/checkpoint/langgraph/checkpoint/base/__init__.py#L38
+            sends = []
+            if parent_checkpoint_id != "" and parent_checkpoint_id is not None:
+                sends = sorted(
+                    (
+                        (*w, k[1])
+                        for k, w in self.writes[
+                            (thread_id, checkpoint_ns, parent_checkpoint_id)
+                        ].items()
+                        if w[1] == TASKS
+                    ),
+                    key=lambda w: (w[3], w[0], w[4]),
+                )
+            else:
+                sends = []
+            checkpoint["pending_sends"] =  [self.serde.loads_typed(s[2]) for s in sends]
+            writes = self.writes[(thread_id, parent_checkpoint_id, checkpoint['id'])].values()
+            if checkpoint_id is None or checkpoint["id"] == checkpoint_id: #just return latest checkpoint
                 return CheckpointTuple(
                 {
                     "configurable": {
@@ -84,22 +103,8 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                         "checkpoint_id": checkpoint["id"],
                     }
                 },
-                checkpoint,
-                metadata,
-                parent_config=parent_checkpoint_id,
-                pending_writes=writes,
-            )
-            elif checkpoint["id"] == checkpoint_id:
-                return CheckpointTuple(
-                {
-                    "configurable": {
-                        "thread_id": thread_id,
-                        "checkpoint_ns": checkpoint_ns,
-                        "checkpoint_id": checkpoint["id"],
-                    }
-                },
-                checkpoint,
-                metadata,
+                checkpoint=checkpoint,
+                metadata=metadata,
                 parent_config=parent_checkpoint_id,
                 pending_writes=writes,
             )
@@ -118,7 +123,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             raise Exception("Synchronous Client is required.")
 
         if before is not None:
-            raise NotImplementedError("Filtering, before, and limit are not supported yet")
+            raise NotImplementedError("Before is not supported yet")
 
         streams_events = self.client.get_stream(
             stream_name="$ce-thread",
@@ -128,7 +133,30 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             thread_id = event.stream_name.split("-")[1]
             checkpoint =  self.jsonplus_serde.loads(event.data)
             metadata = self.jsonplus_serde.loads(event.metadata)
+            parent_checkpoint_id = None
+            checkpoint_ns = ""
+            if "checkpoint_ns" in metadata:
+                checkpoint_ns = metadata["checkpoint_ns"]
+            if "parents" in metadata:
+                if checkpoint_ns in metadata["parents"]:
+                    parent_checkpoint_id = metadata["parents"][checkpoint_ns] 
 
+            sends = []
+
+            if parent_checkpoint_id != "" and parent_checkpoint_id is not None:
+                sends = sorted(
+                    (
+                        (*w, k[1])
+                        for k, w in self.writes[
+                            (thread_id, checkpoint_ns, parent_checkpoint_id)
+                        ].items()
+                        if w[1] == TASKS
+                    ),
+                    key=lambda w: (w[3], w[0], w[4]),
+                )
+            else:
+                sends = []
+            checkpoint["pending_sends"] =  [self.serde.loads_typed(s[2]) for s in sends]
 
             if filter and not all(
                     query_value == metadata.get(query_key)
@@ -136,33 +164,35 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             ):
                 continue
 
-            parent_checkpoint_id = None
-            checkpoint_ns = None
-            if "checkpoint_ns" in checkpoint and checkpoint["checkpoint_ns"] is not None\
-                    and config is not None and "configurable" in config and "checkpoint_ns" in config["configurable"]:
-                if checkpoint["checkpoint_ns"] != config["configurable"]["checkpoint_ns"]:
-                    continue
-                else:
-                    parent_checkpoint_id = checkpoint["checkpoint_ns"]
+            if checkpoint_ns is not None and checkpoint_ns != "":
+                if config is not None and "configurable" in config and "checkpoint_ns" in config["configurable"]:
+                    if checkpoint_ns != config["configurable"]["checkpoint_ns"]:
+                        continue
+
 
             # limit search results
             if limit is not None and limit <= 0:
                 break
             elif limit is not None:
                 limit -= 1
+            writes = self.writes[
+                        (thread_id, checkpoint_ns, checkpoint['id'])
+                    ].values()
 
             yield CheckpointTuple(
                 {
                     "configurable": {
                         "thread_id": thread_id,
-                        "checkpoint_ns": checkpoint["checkpoint_ns"],
+                        "checkpoint_ns": checkpoint_ns,
                         "checkpoint_id": checkpoint['id'],
                     }
                 },
                 checkpoint,
                 metadata,
-                None, #TODO: need to implement pending writes
-                None, #TODO: need to implement parent checkpoint
+                parent_config=parent_checkpoint_id, 
+                pending_writes=[
+                    (id, c, self.serde.loads_typed(v)) for id, c, v, _ in writes
+                ],
             )
 
     def put(
@@ -178,15 +208,18 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         """
         if self.client is None:
             raise Exception("Synchronous Client is required.")
-        # c = checkpoint.copy()
-        # c.pop("pending_sends")  # type: ignore[misc]
-
+        c = checkpoint.copy()
+        try:
+            c.pop("pending_sends")  # type: ignore[misc]    
+        except:
+            c["pending_sends"] = []
+    
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"]["checkpoint_ns"]
-        checkpoint["checkpoint_ns"] = checkpoint_ns
-        serialized_checkpoint = self.jsonplus_serde.dumps(checkpoint)
+        serialized_checkpoint = self.jsonplus_serde.dumps(c)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
-
+        print("serialized_checkpoint", serialized_checkpoint)
+        print("serialized_metadata", serialized_metadata)
         checkpoint_event = NewEvent(
             type="langgraph_checkpoint",
             data=serialized_checkpoint,
@@ -239,7 +272,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         if self.async_client is None:
             raise Exception("ASynchronous Client is required.")
         result: Optional[CheckpointTuple] = None
-        checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = get_checkpoint_id(config)
         thread_id = config["configurable"]["thread_id"]
         try:
@@ -251,20 +283,44 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             async for event in await checkpoints_events:
                 checkpoint = self.jsonplus_serde.loads(event.data)
                 metadata = self.jsonplus_serde.loads(event.metadata)
+                parent_checkpoint_id = ""
+                checkpoint_ns = ""
+                if "checkpoint_ns" in metadata:
+                    checkpoint_ns = metadata["checkpoint_ns"]
+                if "parents" in metadata:
+                    if checkpoint_ns in metadata["parents"]:
+                        parent_checkpoint_id = metadata["parents"][checkpoint_ns] 
+                        # https://github.com/langchain-ai/langgraph/blob/e757a800019f6f943a78856cbe64fe1e3be4d32d/libs/checkpoint/langgraph/checkpoint/base/__init__.py#L38
+                sends = []
+                if parent_checkpoint_id != "" and parent_checkpoint_id is not None:
+                    sends = sorted(
+                        (
+                            (*w, k[1])
+                            for k, w in self.writes[
+                                (thread_id, checkpoint_ns, parent_checkpoint_id)
+                            ].items()
+                            if w[1] == TASKS
+                        ),
+                        key=lambda w: (w[3], w[0], w[4]),
+                    )
+                else:
+                    sends = []
+                checkpoint["pending_sends"] =  [self.serde.loads_typed(s[2]) for s in sends]
+                writes = self.writes[(thread_id, parent_checkpoint_id, checkpoint['id'])].values()
                 if checkpoint_id is None or checkpoint["id"] == checkpoint_id:
                     result = CheckpointTuple(
-                        {
-                            "configurable": {
-                                "thread_id": thread_id,
-                                "checkpoint_ns": checkpoint_ns,
-                                "checkpoint_id": checkpoint["id"],
-                            }
-                        },
-                        checkpoint,
-                        metadata,
-                        None,  # TODO: need to implement pending writes
-                        None,  # TODO: need to implement parent checkpoint
-                    )
+                                {
+                                    "configurable": {
+                                        "thread_id": thread_id,
+                                        "checkpoint_ns": checkpoint_ns,
+                                        "checkpoint_id": checkpoint["id"],
+                                    }
+                                },
+                                checkpoint=checkpoint,
+                                metadata=metadata,
+                                parent_config=parent_checkpoint_id,
+                                pending_writes=writes,
+                            )
                     break
         except exceptions.NotFound:
             pass
@@ -293,51 +349,66 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         )
         async for event in await streams_events:
             thread_id = event.stream_name.split("-")[1]
-            checkpoint = self.jsonplus_serde.loads(event.data)
+            checkpoint =  self.jsonplus_serde.loads(event.data)
             metadata = self.jsonplus_serde.loads(event.metadata)
-            writes = []
             parent_checkpoint_id = None
+            checkpoint_ns = ""
+            if "checkpoint_ns" in metadata:
+                checkpoint_ns = metadata["checkpoint_ns"]
+            if "parents" in metadata:
+                if checkpoint_ns in metadata["parents"]:
+                    parent_checkpoint_id = metadata["parents"][checkpoint_ns] 
+
+            sends = []
+
+            if parent_checkpoint_id != "" and parent_checkpoint_id is not None:
+                sends = sorted(
+                    (
+                        (*w, k[1])
+                        for k, w in self.writes[
+                            (thread_id, checkpoint_ns, parent_checkpoint_id)
+                        ].items()
+                        if w[1] == TASKS
+                    ),
+                    key=lambda w: (w[3], w[0], w[4]),
+                )
+            else:
+                sends = []
+            checkpoint["pending_sends"] =  [self.serde.loads_typed(s[2]) for s in sends]
+
             if filter and not all(
                     query_value == metadata.get(query_key)
                     for query_key, query_value in filter.items()
             ):
                 continue
 
-            if "checkpoint_ns" in checkpoint and checkpoint["checkpoint_ns"] is not None:
-                writes = self.writes[(thread_id, checkpoint["checkpoint_ns"], checkpoint['id'])].values()
-                if checkpoint["checkpoint_ns"] != config["configurable"]["checkpoint_ns"]:
-                    continue
-                else:
-                    parent_checkpoint_id = checkpoint["checkpoint_ns"]
+            if checkpoint_ns is not None and checkpoint_ns != "":
+                if config is not None and "configurable" in config and "checkpoint_ns" in config["configurable"]:
+                    if checkpoint_ns != config["configurable"]["checkpoint_ns"]:
+                        continue
+
 
             # limit search results
             if limit is not None and limit <= 0:
                 break
             elif limit is not None:
                 limit -= 1
+            writes = self.writes[
+                        (thread_id, checkpoint_ns, checkpoint['id'])
+                    ].values()
 
             yield CheckpointTuple(
                 {
                     "configurable": {
                         "thread_id": thread_id,
-                        "checkpoint_ns": config['configurable']["checkpoint_ns"],
+                        "checkpoint_ns": checkpoint_ns,
                         "checkpoint_id": checkpoint['id'],
                     }
                 },
                 checkpoint,
                 metadata,
-                parent_config=(
-                    {
-                        "configurable": {
-                            "thread_id": thread_id,
-                            "checkpoint_ns": config['configurable']["checkpoint_ns"],
-                            "checkpoint_id": parent_checkpoint_id,
-                        }
-                    }
-                    if parent_checkpoint_id
-                    else None
-                ),
-                pending_writes=[ #writes in memory
+                parent_config=parent_checkpoint_id, 
+                pending_writes=[
                     (id, c, self.serde.loads_typed(v)) for id, c, v, _ in writes
                 ],
             )
@@ -352,24 +423,28 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         if self.async_client is None:
             raise Exception("ASynchronous Client is required.")
         """
-                Store a checkpoint with its configuration and metadata.
-                TODO: Implement error handling
-                """
-        # c = checkpoint.copy()
-        # c.pop("pending_sends")  # type: ignore[misc]
-
+        Store a checkpoint with its configuration and metadata.
+        """
+        if self.client is None:
+            raise Exception("Synchronous Client is required.")
+        try:
+            c.pop("pending_sends")  # type: ignore[misc]    
+        except:
+            c["pending_sends"] = []
+    
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"]["checkpoint_ns"]
-        checkpoint["checkpoint_ns"] = checkpoint_ns
-        serialized_checkpoint = self.jsonplus_serde.dumps(checkpoint)
+        serialized_checkpoint = self.jsonplus_serde.dumps(c)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
-
+        print("serialized_checkpoint", serialized_checkpoint)
+        print("serialized_metadata", serialized_metadata)
         checkpoint_event = NewEvent(
             type="langgraph_checkpoint",
             data=serialized_checkpoint,
             metadata=serialized_metadata,
             content_type='application/octet-stream',
         )
+        
         await self.async_client.append_to_stream(
             stream_name=f"thread-{thread_id}",
             events=[checkpoint_event],
@@ -406,7 +481,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         next_h = random.random()
         return f"{next_v:032}.{next_h:016}"
 
-    def hot_path(self, thread_id: int):
+    def trace(self, thread_id: int):
         if self.client is None:
             raise Exception("Synchronous Client is required.")
         try:
@@ -436,26 +511,23 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
 
             df = pd.DataFrame(execution_times,
                               columns=['Previous Event', 'Current Event', 'Execution Time (seconds)'])
-            print(df)
-
-            # Plot Pie Chart
-            plt.figure(figsize=(8, 8))
-            plt.pie(df['Execution Time (seconds)'], labels=df['Current Event'], autopct='%1.1f%%', startangle=140)
-            plt.title('Execution Time Distribution')
-            plt.show()
+            return df
 
         except Exception as e:
             print(f"Error: {e}")
             return None
     def set_max_count(self, max_count: int, thread_id: int) -> None:
-        #TODO: lots of sanity checks and merging metadata
         stream_name = "thread-" + str(thread_id)
-        # metadata = self.client.get_stream_metadata(stream_name=stream_name)
         metadata = {"$maxCount": max_count}
         self.client.set_stream_metadata(
             stream_name=stream_name,
             metadata=metadata,
         )
     def set_max_age(self, max_count: int, thread_id) -> None:
-        raise NotImplementedError(_AIO_ERROR_MSG)
+        stream_name = "thread-" + str(thread_id)
+        metadata = {"$maxAge": max_count}
+        self.client.set_stream_metadata(
+            stream_name=stream_name,
+            metadata=metadata,
+        )
 

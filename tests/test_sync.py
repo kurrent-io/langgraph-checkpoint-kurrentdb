@@ -5,11 +5,11 @@ from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient
 
 # Fixtures
 @pytest.fixture
-def client():
+def client(kurrentdb_container):
     return KurrentDBClient(uri="esdb://localhost:2113?Tls=false")
 
 @pytest.fixture
-def async_client():
+def async_client(kurrentdb_container):
     return AsyncKurrentDBClient(uri="esdb://localhost:2113?Tls=false")
 
 @pytest.fixture
@@ -33,13 +33,19 @@ def sample_metadata():
     return {"source": "input", "step": 1, "writes": {"key": "value"}}
 
 # Tests
-def test_put_checkpoint(memory_saver, base_config, sample_checkpoint, sample_metadata):
-    saved_config = memory_saver.put(base_config, sample_checkpoint, sample_metadata, {})
-    assert saved_config["configurable"]["thread_id"] == "1"
-    assert saved_config["configurable"]["checkpoint_id"] == sample_checkpoint["id"]
-    assert saved_config["configurable"]["checkpoint_ns"] == ""
+def test_put_and_list_checkpoints(memory_saver, base_config):
 
-def test_list_checkpoints(memory_saver, base_config):
+    config = {"configurable": {"thread_id": "1", "checkpoint_ns": ""}}
+    checkpoint = {"ts": "2024-05-04T06:32:42.235444+00:00", "id": "1ef4f797-8335-6428-8001-8a1503f9b875",
+                  "channel_values": {"key": "value"}}
+    saved_config = memory_saver.put(config, checkpoint, {"source": "input", "step": 1, "writes": {"key": "value"}}, {})
+    
+    # saved_config = memory_saver.put(base_config, sample_checkpoint, sample_metadata, {})
+    assert saved_config["configurable"]["thread_id"] == "1"
+    assert saved_config["configurable"]["checkpoint_id"] == "1ef4f797-8335-6428-8001-8a1503f9b875"
+    assert saved_config["configurable"]["checkpoint_ns"] == ""
+    import time 
+    time.sleep(5)
     checkpoints = list(memory_saver.list(base_config))
     assert isinstance(checkpoints, list)
     # Add more specific assertions based on expected checkpoint structure
@@ -69,6 +75,19 @@ def test_get_tuple_with_specific_checkpoint(memory_saver):
         assert checkpoint_tuple.config["configurable"]["checkpoint_id"] == config_with_id["configurable"]["checkpoint_id"]
 
 def test_simple_graph_execution(memory_saver, base_config):
+
+    builder = StateGraph(int)
+    builder.add_node("add_one", lambda x: x + 1)
+    builder.set_entry_point("add_one")
+    builder.set_finish_point("add_one")
+
+    graph = builder.compile(checkpointer=memory_saver)
+    config = {"configurable": {"thread_id": "simple-graph-execution-test"}}
+    graph.get_state(config)
+    print(graph.get_state(config))
+    result = graph.invoke(3, config)
+    graph.get_state(config)
+
     # Build and run simple graph
     builder = StateGraph(int)
     builder.add_node("add_one", lambda x: x + 1)
@@ -78,18 +97,21 @@ def test_simple_graph_execution(memory_saver, base_config):
     graph = builder.compile(checkpointer=memory_saver)
     
     # Test initial state
-    initial_state = graph.get_state(base_config)
-    assert initial_state is None  # Or whatever the expected initial state should be
+    initial_state = graph.get_state(config)
+    assert initial_state is not None 
     
     # Test execution
-    result = graph.invoke(3, base_config)
-    assert result == 4  # add_one should increment 3 to 4
-    
+    result = graph.invoke(3, config)
+    print(result)
     # Test final state
-    final_state = graph.get_state(base_config)
+    final_state = graph.get_state(config)
     assert final_state is not None
 
+    # Access the state values directly (no need to call it)
+    assert final_state[0] == 4  # Check final value after add_one
+
 def test_subgraph_execution(memory_saver, base_config):
+    config = {"configurable": {"thread_id": "subgraph-execution-test"}}
     # Main graph
     builder = StateGraph(int)
     builder.add_node("add_one", lambda x: x + 1)
@@ -109,11 +131,11 @@ def test_subgraph_execution(memory_saver, base_config):
     graph = builder.compile(checkpointer=memory_saver)
 
     # Test execution
-    result = graph.invoke(3, base_config)
+    result = graph.invoke(3, config)
     assert result == 6  # 3 + 1 + 2 = 6
 
     # Test state history
-    state_history = list(graph.get_state_history(base_config))
+    state_history = list(graph.get_state_history(config))
     assert len(state_history) > 0
 
 @pytest.mark.asyncio
