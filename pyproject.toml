@@ -1,5 +1,5 @@
 [project]
-name = "langgraph-checkpoint-kurrentdb"
+name = "langgraph_checkpoint_kurrentdb"
 version = "0.1.0"
 description = "KurrentDB checkpoint implementation for LangGraph"
 authors = [
