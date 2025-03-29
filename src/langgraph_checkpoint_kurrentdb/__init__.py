@@ -1,11 +1,8 @@
 from tkinter.constants import RAISED
 
 import kurrentdbclient
-from langgraph.graph import StateGraph
 from langgraph.checkpoint.base import EmptyChannelError
-import random
 import threading
-from copy import deepcopy
 from typing import Any, AsyncIterator, Dict, Iterator, Optional, Sequence, Tuple
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -83,17 +80,16 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 versions = checkpoint["channel_versions"]
 
             channel_values = {}
-            print("checkpoint before: ", checkpoint)
-            for key in keys:
-                channel_values[self.breakdown_channel_stream_name(key)] = (
-                    self.get_channel_value(key, versions, thread_id, checkpoint["id"], checkpoint["id"]))
-            checkpoint["channel_values"] = channel_values
-            print("checkpointer after: ", checkpoint)
             metadata = self.jsonplus_serde.loads(event.metadata)
             parent_checkpoint_id = ""
             checkpoint_ns = ""
             if "checkpoint_ns" in metadata:
                 checkpoint_ns = metadata["checkpoint_ns"]
+            for key in keys:
+                channel_values[self.breakdown_channel_stream_name(key)] = (
+                    self.get_channel_value(key, versions, thread_id, checkpoint_ns, checkpoint["id"]))
+            checkpoint["channel_values"] = channel_values
+
             if "parents" in metadata:
                 if checkpoint_ns in metadata["parents"]:
                     parent_checkpoint_id = metadata["parents"][checkpoint_ns] 
@@ -126,7 +122,9 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 checkpoint=checkpoint,
                 metadata=metadata,
                 parent_config=parent_checkpoint_id,
-                pending_writes=writes,
+                pending_writes=[
+                        (id, c, self.serde.loads_typed(v)) for id, c, v, _ in writes
+                    ],
             )
         return None
 
@@ -152,6 +150,19 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             thread_id = event.stream_name.split("-")[1]
             checkpoint =  self.jsonplus_serde.loads(event.data)
             metadata = self.jsonplus_serde.loads(event.metadata)
+            keys = []
+            versions = []
+            if ("channel_values" in checkpoint and "keys" in checkpoint["channel_values"]
+                    and "channel_versions" in checkpoint):
+                keys = checkpoint["channel_values"].pop("keys")
+                versions = checkpoint["channel_versions"]
+
+            channel_values = {}
+            for key in keys:
+                channel_values[self.breakdown_channel_stream_name(key)] = (
+                    self.get_channel_value(key, versions, thread_id, checkpoint["id"], checkpoint["id"]))
+            checkpoint["channel_values"] = channel_values
+
             parent_checkpoint_id = None
             checkpoint_ns = ""
             if "checkpoint_ns" in metadata:
@@ -243,18 +254,29 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         """
         if "channel_values" in c:
             channel_keys = []
+            if "channel_versions" not in c:
+                c["channel_versions"] = {}
             for key in c["channel_values"]:
-                channel_keys.append(thread_id + "->" + key)
-            self.breakdown_channel_values(thread_id, c["channel_values"], c["channel_versions"])
+                channel_keys.append(self.build_channel_stream_name(thread_id, key, checkpoint_ns))
+                if key not in c["channel_versions"]:
+                    c["channel_versions"][key] = 0
+
+            self.breakdown_channel_values(thread_id, c["channel_values"], c["channel_versions"], checkpoint_ns)
             c["channel_values"] = {}  # empty dict
             # rename channel versions to stream names
             new_channel_version = {}
             for key in c["channel_versions"]:
-                stream_name = self.build_channel_stream_name(thread_id, key)
+                stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
                 new_channel_version[stream_name] = c["channel_versions"][key]
+            new_versions_seen = {}
+            if "versions_seen" in c:
+                for key in c["versions_seen"]:
+                    stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
+                    new_versions_seen[stream_name] = c["versions_seen"][key]
+
+            c["versions_seen"] = new_versions_seen
             c["channel_versions"] = new_channel_version
             c["channel_values"]["keys"] = channel_keys
-
         serialized_checkpoint = self.jsonplus_serde.dumps(c)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
 
@@ -301,7 +323,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 continue
             print("Pending Checkpoint: ", c, type(c))
             if len(c) > 0 and isinstance(c, str):
-                c = self.build_channel_stream_name(thread_id, c)
+                c = self.build_channel_stream_name(thread_id, c, checkpoint_ns)
             self.writes[outer_key][inner_key] = (
                 task_id,
                 c,
@@ -361,7 +383,9 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                                 checkpoint=checkpoint,
                                 metadata=metadata,
                                 parent_config=parent_checkpoint_id,
-                                pending_writes=writes,
+                                pending_writes=[
+                                    (id, c, self.serde.loads_typed(v)) for id, c, v, _ in writes
+                                ],
                             )
                     break
         except exceptions.NotFound:
@@ -501,19 +525,25 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         }
 
     @staticmethod
-    def build_channel_stream_name(thread_id: str, key: str):
-        return thread_id + "->" + key
+    def build_channel_stream_name(thread_id: str, key: str, checkpoint_ns: str):
+        stream_name = thread_id
+        if checkpoint_ns is not None:
+            stream_name = stream_name +'_'+ checkpoint_ns
+        return stream_name + "->" + key
 
     @staticmethod
     def breakdown_channel_stream_name(stream_name: str):
         return stream_name.split("->")[1]
 
-    def breakdown_channel_values(self, thread_id, channel_values: dict[str, Any], channel_versions: dict[str, str]):
+    def breakdown_channel_values(self, thread_id,
+                                 channel_values: dict[str, Any],
+                                 channel_versions: dict[str, str],
+                                 checkpoint_ns: str = None):
         if self.client is not None:
             # executing synchronously
             for key in channel_values:
                 serialized_value = self.jsonplus_serde.dumps(channel_values[key])
-                stream_name = self.build_channel_stream_name(thread_id, key)
+                stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
                 checkpoint_event = NewEvent(
                     type="channel_value",
                     data=serialized_value,
@@ -534,8 +564,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             stream_name = channel_name
 
             #get latest write from pending writes if present
-            for key in self.writes:
-                print("KEYS: ", key)
             if (thread_id, checkpoint_ns, checkpoint_id) in self.writes:
                 print("INSIDE PENDING WRITES")
                 print(self.writes[(thread_id, checkpoint_ns, checkpoint_id)].items())

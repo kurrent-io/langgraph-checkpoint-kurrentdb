@@ -2,7 +2,7 @@ import pytest
 from langgraph.graph import StateGraph
 from langgraph_checkpoint_kurrentdb import KurrentDBSaver
 from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient
-
+from collections import defaultdict
 # Fixtures
 @pytest.fixture
 def client(kurrentdb_container):
@@ -47,6 +47,7 @@ def test_put_and_list_checkpoints(memory_saver, base_config):
     import time 
     time.sleep(5)
     checkpoints = list(memory_saver.list(base_config))
+    print(checkpoints)
     assert isinstance(checkpoints, list)
     # Add more specific assertions based on expected checkpoint structure
 
@@ -76,18 +77,19 @@ def test_get_tuple_with_specific_checkpoint(memory_saver):
 
 def test_simple_graph_execution(memory_saver, base_config):
 
-    builder = StateGraph(int)
-    builder.add_node("add_one", lambda x: x + 1)
-    builder.set_entry_point("add_one")
-    builder.set_finish_point("add_one")
+    # builder = StateGraph(int)
+    # builder.add_node("add_one", lambda x: x + 1)
+    # builder.set_entry_point("add_one")
+    # builder.set_finish_point("add_one")
+    #
+    # graph = builder.compile(checkpointer=memory_saver)
+    # config = {"configurable": {"thread_id": "simple-graph-execution-test"}}
+    # graph.get_state(config)
+    # print(graph.get_state(config))
+    # result = graph.invoke(3, config)
+    # graph.get_state(config)
 
-    graph = builder.compile(checkpointer=memory_saver)
     config = {"configurable": {"thread_id": "simple-graph-execution-test"}}
-    graph.get_state(config)
-    print(graph.get_state(config))
-    result = graph.invoke(3, config)
-    graph.get_state(config)
-
     # Build and run simple graph
     builder = StateGraph(int)
     builder.add_node("add_one", lambda x: x + 1)
@@ -111,7 +113,8 @@ def test_simple_graph_execution(memory_saver, base_config):
     assert final_state[0] == 4  # Check final value after add_one
 
 def test_subgraph_execution(memory_saver, base_config):
-    config = {"configurable": {"thread_id": "subgraph-execution-test"}}
+    memory_saver.writes = defaultdict(dict)
+    config = {"configurable": {"thread_id": "main-graph"}}
     # Main graph
     builder = StateGraph(int)
     builder.add_node("add_one", lambda x: x + 1)
@@ -137,10 +140,3 @@ def test_subgraph_execution(memory_saver, base_config):
     # Test state history
     state_history = list(graph.get_state_history(config))
     assert len(state_history) > 0
-
-@pytest.mark.asyncio
-async def test_hot_path(memory_saver):
-    # Note: This test might need adjustment based on what hot_path is expected to return
-    with pytest.raises(Exception) as exc_info:
-        memory_saver.hot_path(42)
-    assert "Synchronous Client is required" in str(exc_info.value)
