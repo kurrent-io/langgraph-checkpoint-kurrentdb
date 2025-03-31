@@ -14,11 +14,15 @@ dependencies = [
     "pandas>=2.0.0",
     "matplotlib>=3.0.0",
     "pytest (>=8.3.5,<9.0.0)",
+    "pytest-cov>=4.1.0"
 ]
 
 [tool.poetry]
 packages = [{include = "langgraph_checkpoint_kurrentdb", from = "src"}]
 
+
+[tool.poetry.group.dev.dependencies]
+pytest-asyncio = "^0.26.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -36,4 +40,5 @@ test = [
     "pytest-asyncio>=0.23.0",
     "docker>=6.1.0",
     "requests>=2.31.0",
+    "pytest-cov>=4.1.0",
 ]

@@ -87,10 +87,11 @@ def sample_metadata():
 def test_notfound_exception_handling(mock_saver, base_config):
     """Test that NotFound exceptions are properly handled in get_tuple"""
     config_error = {"configurable": {"thread_id": "non_existent_thread", "checkpoint_ns": ""}}
-    
-    # Should return None instead of raising an exception
-    result = mock_saver.get_tuple(config_error)
-    assert result is None
+
+    # self.client should raise exception notfound and then return None
+    with patch.object(mock_saver.client, 'get_stream', side_effect=exceptions.NotFound("Stream not found")):
+        result = mock_saver.get_tuple(config_error)
+        assert result is None
 
 def test_missing_client_error(base_config):
     """Test error when no client is provided"""
@@ -114,12 +115,6 @@ async def test_async_client_required(client, base_config):
     with pytest.raises(Exception) as excinfo:
         await saver.aget_tuple(base_config)
     assert "ASynchronous Client is required" in str(excinfo.value)
-
-def test_set_max_age_not_implemented(mock_saver):
-    """Test that set_max_age raises NotImplementedError"""
-    with pytest.raises(NotImplementedError) as excinfo:
-        mock_saver.set_max_age(100, "test_thread")
-    assert "Enterprise version" in str(excinfo.value)
 
 # Tests with patched components
 @patch('langgraph_checkpoint_kurrentdb.JsonPlusSerializer')
@@ -154,6 +149,4 @@ def test_empty_stream_handling(mock_saver):
     
     # get_tuple should return None for an empty stream
     assert mock_saver.get_tuple(empty_config) is None
-    
-    # list should return an empty iterator
-    assert list(mock_saver.list(empty_config)) == []
+

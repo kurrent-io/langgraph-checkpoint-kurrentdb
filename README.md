@@ -50,3 +50,8 @@ df = saver.trace(config["configurable"]["thread_id"])
 print(df)
 
 ```
+
+## Tests
+```bash
+poetry run pytest --cov --cov-report=term-missing
+```

@@ -15,6 +15,18 @@ def kurrentdb_container() -> Generator[None, None, None]:
     at the beginning of the test session and stopped after all tests complete.
 
     """
+
+    # Just to see if there is a running instance
+    try:
+        # Check if the KurrentDB HTTP port is accessible
+        response = requests.get("http://localhost:2113/info", timeout=5)
+        if response.status_code == 200:
+            print("A KurrentDB is already running. Using the existing instance.")
+            yield
+    except Exception as e:
+        print(f"No running KurrentDB Found...")
+
+
     print("Starting KurrentDB container")
     if platform.system() == "Windows":
         client = docker.DockerClient(base_url="tcp://localhost:2375")
@@ -93,7 +105,7 @@ def kurrentdb_container() -> Generator[None, None, None]:
     
     # Stop and remove container after tests
     print("Stopping KurrentDB container")
-    input("Press Enter to continue...")
+    # input("Press Enter to continue...")
     container.stop()
 
 @pytest.fixture(scope="session")
