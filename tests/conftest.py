@@ -105,7 +105,6 @@ def kurrentdb_container() -> Generator[None, None, None]:
     
     # Stop and remove container after tests
     print("Stopping KurrentDB container")
-    # input("Press Enter to continue...")
     container.stop()
 
 @pytest.fixture(scope="session")

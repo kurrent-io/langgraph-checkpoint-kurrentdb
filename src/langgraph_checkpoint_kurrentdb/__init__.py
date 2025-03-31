@@ -340,6 +340,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 backwards=True
             )
             async for event in await checkpoints_events:
+                print(event)
                 checkpoint = self.jsonplus_serde.loads(event.data)
                 keys = []
                 versions = []
@@ -363,7 +364,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                     if checkpoint_ns in metadata["parents"]:
                         parent_checkpoint_id = metadata["parents"][checkpoint_ns] 
                         # https://github.com/langchain-ai/langgraph/blob/e757a800019f6f943a78856cbe64fe1e3be4d32d/libs/checkpoint/langgraph/checkpoint/base/__init__.py#L38
-                sends = []
                 if parent_checkpoint_id != "" and parent_checkpoint_id is not None:
                     sends = sorted(
                         (
@@ -506,13 +506,11 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        if self.async_client is None:
-            raise Exception("ASynchronous Client is required.")
         """
         Store a checkpoint with its configuration and metadata.
         """
-        if self.client is None:
-            raise Exception("Synchronous Client is required.")
+        if self.async_client is None:
+            raise Exception("ASynchronous Client is required.")
         try:
             c = checkpoint.copy()
             c.pop("pending_sends")  # type: ignore[misc]    
