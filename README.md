@@ -1,6 +1,18 @@
-# LangGraph Checkpoint KurrentDB
+# LangGraph Checkpoint KurrentDB: Experimental
 
-KurrentDB checkpoint implementation for LangGraph.
+KurrentDB checkpoint implementation for LangGraph. 
+This is an experimental release and not be ready to be used in production, yet.
+This project is intended to show that KurrentDB has the right native capabilities to be used as a checkpointing mechanism for LangGraph.
+
+If you would like to see a production version of the checkpointer, feel free to upvote this issue: https://github.com/kurrent-io/langgraph-checkpoint-kurrentdb/issues/3
+
+## Overview
+
+LangGraph is an orchestration framework for complex agentic systems.
+This package provides a checkpointing mechanism for LangGraph using KurrentDB.
+We use KurrentDB's event sourcing capabilities to store the state of the LangGraph execution.
+The versioning of state is mapped to KurrentDB's native event versioning and every the channel value is kept into its own stream.
+Every step in the thread then only has a pointer (channel value name and version) to the actual channel value (event).
 
 ## Installation
 
