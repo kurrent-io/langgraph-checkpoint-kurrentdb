@@ -682,6 +682,16 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 return None
         return None
 
+    async def aput_writes(
+            self,
+            config: RunnableConfig,
+            writes: Sequence[Tuple[str, Any]],
+            task_id: str,
+            task_path: str = "",
+    ) -> None:
+        """In memory and not asynchronous"""
+        self.put_writes(config, writes, task_id, task_path)
+
     def get_next_version(self, current: Optional[str], channel: ChannelProtocol) -> str:
         """Generate the next version ID for a channel.
         This method creates a new version identifier for a channel based on its current version.
@@ -693,9 +703,13 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         Returns:
             str: The next version identifier is based on the next expected version in KurrentDB.
         """
+        events = []
         try:
             channel_stream_name = channel.checkpoint()
-            events = self.client.read_stream(channel_stream_name, resolve_links=True, backwards=True, limit=1)
+            if self.client is not None:
+                events = self.client.read_stream(channel_stream_name, resolve_links=True, backwards=True, limit=1)
+            if self.async_client is not None:
+                events = self.async_client.read_stream(channel_stream_name, resolve_links=True, backwards=True, limit=1).__await__()
             for event in events:
                 return str(event.stream_position + 1)
         except EmptyChannelError:
@@ -703,6 +717,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         except kurrentdbclient.exceptions.NotFound:
             return str(0)
         return str(0)
+
 
     #TODO: rework with new channel protocol
     def trace(self, thread_id: int):

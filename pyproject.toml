@@ -14,7 +14,8 @@ dependencies = [
     "pandas>=2.0.0",
     "matplotlib>=3.0.0",
     "pytest (>=8.3.5,<9.0.0)",
-    "pytest-cov>=4.1.0"
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.26.0",
 ]
 
 [tool.poetry]
