@@ -721,52 +721,9 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
 
     #TODO: rework with new channel protocol
     def trace(self, thread_id: int):
-        if self.client is None:
-            raise Exception("Synchronous Client is required.")
-        try:
-            checkpoints_events = self.client.get_stream(
-                stream_name="thread-" + str(thread_id),
-                resolve_links=True,
-                backwards=False #read forwards
-            )
-            time_map = {}
-            for event in checkpoints_events:
-                checkpoint = self.jsonplus_serde.loads(event.data)
-                # metadata = self.jsonplus_serde.loads(event.metadata)
-                if "channel_versions" in checkpoint:
-                    for el in checkpoint["channel_versions"]:
-                        if el not in time_map or "start:" in el:
-                            time_map[el] = event.recorded_at
-            # Sort events by datetime only
-            events = sorted(time_map.items(), key=lambda x: x[1])
-
-            # Compute time differences between consecutive events
-            execution_times = []
-            previous_key, previous_time = events[0]
-            for key, current_time in events[1:]:
-                execution_time = (current_time - previous_time).total_seconds()
-                execution_times.append((previous_key, key, execution_time))
-                previous_key, previous_time = key, current_time
-
-            df = pd.DataFrame(execution_times,
-                              columns=['Previous Event', 'Current Event', 'Execution Time (seconds)'])
-            return df
-
-        except Exception as e:
-            print(f"Error: {e}")
-            return None
+        raise NotImplementedError("")
     def set_max_count(self, max_count: int, thread_id: int) -> None:
-        stream_name = "thread-" + str(thread_id)
-        metadata = {"$maxCount": max_count}
-        self.client.set_stream_metadata(
-            stream_name=stream_name,
-            metadata=metadata,
-        )
+        raise NotImplementedError()
     def set_max_age(self, max_count: int, thread_id) -> None:
-        stream_name = "thread-" + str(thread_id)
-        metadata = {"$maxAge": max_count}
-        self.client.set_stream_metadata(
-            stream_name=stream_name,
-            metadata=metadata,
-        )
+        raise NotImplementedError()
 
