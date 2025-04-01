@@ -1,5 +1,3 @@
-from tkinter.constants import RAISED
-
 import kurrentdbclient
 from langgraph.checkpoint.base import EmptyChannelError
 import threading
@@ -17,11 +15,7 @@ from langgraph.checkpoint.base import (
     SerializerProtocol,
     get_checkpoint_id
 )
-import pandas as pd
-_AIO_ERROR_MSG = (
-    "Asynchronous checkpointer is only available in the Enterprise version of KurrentDB Checkpointer. "
-    "Find out more at https://www.kurrent.io/talk_to_expert"
-)
+
 from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient, NewEvent, StreamState, exceptions
 from collections import defaultdict
 
@@ -413,10 +407,10 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             raise Exception("ASynchronous Client is required.")
 
         if before is not None:
-            raise NotImplementedError("Filtering, before, and limit are not supported yet")
+            raise NotImplementedError("Before is not supported yet")
 
         # Read thread category stream $ce-thread
-        # this will give us all thread streams and then we can read those to find the checkpoints
+        # this will give us all thread streams then we can read those to find the checkpoints
         streams_events = self.async_client.read_stream(
             stream_name="$ce-thread",
             resolve_links=True
