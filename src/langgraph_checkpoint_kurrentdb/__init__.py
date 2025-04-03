@@ -572,7 +572,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
     def build_channel_stream_name(thread_id: str, key: str, checkpoint_ns: str):
         stream_name = thread_id
         if checkpoint_ns is not None:
-            stream_name = stream_name +'_'+ checkpoint_ns
+            stream_name = str(stream_name) +'_'+ str(checkpoint_ns)
         return stream_name + "->" + key
 
     @staticmethod
