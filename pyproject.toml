@@ -1,6 +1,6 @@
 [project]
 name = "langgraph_checkpoint_kurrentdb"
-version = "0.1.0"
+version = "0.1.1"
 description = "KurrentDB checkpoint implementation for LangGraph"
 authors = [
     {name = "Lougarou",email = "yogisawesome@gmail.com"}
