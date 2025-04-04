@@ -313,7 +313,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             )
 
     async def aget_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
-        print("AGET TUPLE")
         if self.async_client is None:
             raise Exception("ASynchronous Client is required.")
         result: Optional[CheckpointTuple] = None
@@ -491,7 +490,6 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        print("APUT")
         """
         Store a checkpoint with its configuration and metadata.
         """
@@ -520,7 +518,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 if key not in c["channel_versions"]:
                     c["channel_versions"][key] = 0
 
-            new_channel_version, new_versions_seen = self.breakdown_channel_values_async(thread_id, c["channel_values"],
+            new_channel_version, new_versions_seen = await self.breakdown_channel_values_async(thread_id, c["channel_values"],
                                                                                    c["channel_versions"], checkpoint_ns)
             c["channel_values"] = {}  # empty dict
             c["channel_values"]["keys"] = channel_keys
@@ -642,13 +640,12 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                     for event in events:
                         next_version = event.stream_position + 1
                         break
-                self.async_client.append_to_stream(
+                await self.async_client.append_to_stream(
                     stream_name=f"{stream_name}",
                     events=[checkpoint_event],
                     current_version=StreamState.ANY  # conflict resolution done on Python side
-                ).__await__()
+                )
                 new_channel_version[stream_name] = next_version
-            print(new_channel_version, new_channel_seen)
             return new_channel_version, new_channel_seen
 
 

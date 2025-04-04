@@ -113,7 +113,7 @@ def test_simple_graph_execution(memory_saver, base_config):
     assert final_state[0] == 4  # Check final value after add_one
 
 def test_subgraph_execution(memory_saver, base_config):
-    memory_saver.writes = defaultdict(dict)
+    # memory_saver.writes = defaultdict(dict)
     config = {"configurable": {"thread_id": "main-graph"}}
     # Main graph
     builder = StateGraph(int)
@@ -139,4 +139,5 @@ def test_subgraph_execution(memory_saver, base_config):
 
     # Test state history
     state_history = list(graph.get_state_history(config))
+    print(state_history)
     assert len(state_history) > 0
