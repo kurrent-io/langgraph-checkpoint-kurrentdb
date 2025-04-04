@@ -142,7 +142,7 @@ async def test_subgraph_execution(async_client, base_config):
 
     graph = builder.compile(checkpointer=memory_saver)
     # Test execution
-    result = graph.ainvoke(3, config).__await__()
+    result = await graph.ainvoke(3, config)
     assert result == 6  # 3 + 1 + 2 = 6
 
     # Test state history

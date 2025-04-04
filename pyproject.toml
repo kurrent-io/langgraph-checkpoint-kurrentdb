@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langgraph_checkpoint_kurrentdb"
-version = "0.1.0"
+version = "0.1.1"
 description = "KurrentDB checkpoint implementation for LangGraph"
 authors = ["Lougarou <yogisawesome@gmail.com>"]
 readme = "README.md"
