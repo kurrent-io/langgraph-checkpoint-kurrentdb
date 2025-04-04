@@ -11,7 +11,7 @@ python = ">=3.12,<4.0"
 # Core runtime dependencies
 langgraph = ">=0.0.15"
 langchain-core = ">=0.1.0"
-kurrentdbclient = "^0.4.0"
+kurrentdbclient = "^1.0b4"
 pandas = ">=2.0.0"
 matplotlib = ">=3.0.0"
 langgraph-checkpoint = "^2.0.15"
