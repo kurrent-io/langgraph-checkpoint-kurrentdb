@@ -12,7 +12,8 @@ LangGraph is an orchestration framework for complex agentic systems.
 This package provides a checkpointing mechanism for LangGraph using KurrentDB.
 We use KurrentDB's event sourcing capabilities to store the state of the LangGraph execution.
 The versioning of state is mapped to KurrentDB's native event versioning and every the channel value is kept into its own stream.
-Every step in the thread then only has a pointer (channel value name and version) to the actual channel value (event).
+Every step in the thread then only has a pointer (channel value name and version) to the actual channel value (event). 
+(Original Langgraph's channel versioning is also kept)
 
 ```mermaid
 graph TD
