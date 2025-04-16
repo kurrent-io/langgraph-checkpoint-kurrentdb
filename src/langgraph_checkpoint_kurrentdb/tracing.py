@@ -1,6 +1,8 @@
 # Format a single tree line
 import datetime
 from xml.etree.ElementTree import indent
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.resources import Resource
 
 
 def format_line(indent, timestamp, source, step, label, latency, is_last):
@@ -10,41 +12,21 @@ def format_line(indent, timestamp, source, step, label, latency, is_last):
     source_prefix = f"{source} :: " if source != "normal_run" else ""
     return f"{prefix}{branch} [{ts_str}] {source_prefix}Step {step}: [{label}] ({latency} ms)"
 
-def export_tree_otel(thread_id, data):
-    # print_tree_dfs(thread_id, data)
-    # Build and sort entries
-    import time
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.resources import Resource
-    # Configure tracer
+def export_tree_otel(thread_id, data, span_processor, trace):
     trace.set_tracer_provider(TracerProvider(resource=Resource(attributes={
         "service.name": thread_id
     })))
-    tracer = trace.get_tracer(__name__)
-
-    # Configure OTLP exporter to send to collector or backend (e.g., Jaeger/Tempo)
-    otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
-    span_processor = BatchSpanProcessor(otlp_exporter)
     trace.get_tracer_provider().add_span_processor(span_processor)
-
     graphs = {}
-    parent_map = {}
     for source, step, timestamp, label, latency, ns in data.__reversed__():
         ns = "root|" + ns
         indent = len(ns.split("|"))
-        parent = ""
         node = "root"
         if indent > 1:
             nodes = ns.split("|")
             node = nodes[-1]
-            if node != "":
-                parent = nodes[-2]
-            else:
+            if node == "":
                 node = "root"
-            parent_map[node] = parent
         if node != "root":
             node = node.split(":")[0]
         if node not in graphs:
@@ -56,30 +38,14 @@ def export_tree_otel(thread_id, data):
             "label": label,
             "latency": latency,
             "indent": indent,
-            "node": node,
-            "parent": parent
+            "node": node
         })
 
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.resources import Resource
     # Configure tracer
     trace.set_tracer_provider(TracerProvider(resource=Resource(attributes={
         "service.name": thread_id
     })))
     tracer = trace.get_tracer(__name__)
-
-    # Configure OTLP exporter to send to collector or backend (e.g., Jaeger/Tempo)
-    otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
-    span_processor = BatchSpanProcessor(otlp_exporter)
-    trace.get_tracer_provider().add_span_processor(span_processor)
-
-
-
-    for g in graphs:
-        print(g, graphs[g])
 
     #DFS
     traversal = []  #treat as stack and init
@@ -92,9 +58,7 @@ def export_tree_otel(thread_id, data):
     traversed = set()
     while len(traversal) > 0:
         head, level, ctx = traversal.pop()
-        print(head["node"], head["label"], level, ctx)
         # Start a child span using parent context
-
         start_time_unix_nano = int(head["timestamp"].timestamp() * 1_000_000_000)
         duration_nano = head["latency"] * 1_000_000
         end_time = start_time_unix_nano + duration_nano

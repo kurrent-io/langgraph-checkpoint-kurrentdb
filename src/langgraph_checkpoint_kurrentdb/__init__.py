@@ -15,7 +15,7 @@ from langgraph.checkpoint.base import (
     SerializerProtocol,
     get_checkpoint_id
 )
-
+from langgraph_checkpoint_kurrentdb.tracing import export_tree_otel
 from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient, NewEvent, StreamState, exceptions
 from collections import defaultdict
 
@@ -712,69 +712,64 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             return str(0)
         return str(0)
 
-    """
-    Only support one level of subgraph at the moment
-    """
-    def trace(self, thread_id: str):
+    def export_trace(self, thread_id: str, span_processor, trace):
         if self.client is None:
             raise Exception("Synchronous Client is required.")
-        try:
-            checkpoints_events = self.client.get_stream(
-                stream_name="thread-" + str(thread_id),
-                resolve_links=True,
-                backwards=False  # read forwards
-            )
-            execution_times = []
-            previous_seen = None
-            previous_time = None
-            previous_step = None
-            for event in checkpoints_events:
-                if previous_time is None: #first event
-                    previous_time = event.recorded_at
 
-                checkpoint = self.jsonplus_serde.loads(event.data)
-                metadata = self.jsonplus_serde.loads(event.metadata)
-                if previous_step is None:
-                    previous_step = metadata["step"]
-                tree = thread_id
-                if "langgraph_checkpoint_ns" in metadata and "langgraph_node" in metadata:
-                    tree = metadata["langgraph_node"]
+        # try:
+        checkpoints_events = self.client.get_stream(
+            stream_name="thread-" + str(thread_id),
+            resolve_links=True,
+            backwards=False  # read forwards
+        )
+        execution_times = []
+        previous_seen = None
+        previous_time = None
+        previous_step = None
+        for event in checkpoints_events:
+            if previous_time is None: #first event
+                previous_time = event.recorded_at
 
-                if "channel_versions" in checkpoint:
-                    if previous_seen == None: #this is the first step
-                        previous_seen = {}
+            checkpoint = self.jsonplus_serde.loads(event.data)
+            metadata = self.jsonplus_serde.loads(event.metadata)
+            if previous_step is None:
+                previous_step = metadata["step"]
+            tree = "root"
+            ns = ""
+            if "langgraph_checkpoint_ns" in metadata and "langgraph_node" in metadata:
+                ns = metadata["langgraph_checkpoint_ns"]
+                tree = metadata["langgraph_node"]
 
-                    added_node = {}
-                    for el in checkpoint["channel_versions"]:
-                        if el not in previous_seen or checkpoint["channel_versions"][el] != previous_seen[el]:
-                            node_name = ""
-                            if "writes" in metadata:
-                                if metadata["writes"] is None:
-                                    node_name = metadata["source"]
-                                else:
-                                    for key in metadata["writes"]:
-                                        node_name = key
-                                        break
+            if "channel_versions" in checkpoint:
+                if previous_seen == None: #this is the first step
+                    previous_seen = {}
+
+                added_node = {}
+                for el in checkpoint["channel_versions"]:
+                    if el not in previous_seen or checkpoint["channel_versions"][el] != previous_seen[el]:
+                        node_name = ""
+                        if "writes" in metadata:
+                            if metadata["writes"] is None:
+                                node_name = metadata["source"]
                             else:
-                                continue
-                            if node_name in added_node:
-                                continue
-                            added_node[node_name] = True
-                            delta = (event.recorded_at - previous_time)
-                            time_taken = delta.seconds * 1000 + delta.microseconds // 1000
-                            execution_times.append((tree, metadata["step"], event.recorded_at, node_name, time_taken))
-                            previous_seen[el] = checkpoint["channel_versions"][el]
-                if metadata["step"] != previous_step:
-                    previous_step = metadata["step"]
-                    previous_time = event.recorded_at
-            from langgraph_checkpoint_kurrentdb.tracing import print_tree
-            print_tree(thread_id, execution_times)
-            # print(execution_times)
-            #convert to tree
+                                for key in metadata["writes"]:
+                                    node_name = key
+                                    break
+                        else:
+                            continue
+                        if node_name in added_node:
+                            continue
+                        added_node[node_name] = True
+                        delta = (event.recorded_at - previous_time)
+                        time_taken = delta.seconds * 1000 + delta.microseconds // 1000
+                        execution_times.append((tree, metadata["step"], event.recorded_at, node_name, time_taken, ns))
+                        previous_seen[el] = checkpoint["channel_versions"][el]
+            if metadata["step"] != previous_step:
+                previous_step = metadata["step"]
+                previous_time = event.recorded_at
 
-        except Exception as e:
-            print(f"Error: {e}")
-            return None
+        export_tree_otel(thread_id, execution_times, span_processor, trace)
+
     def set_max_count(self, max_count: int, thread_id: int) -> None:
         raise NotImplementedError()
     def set_max_age(self, max_count: int, thread_id) -> None:
