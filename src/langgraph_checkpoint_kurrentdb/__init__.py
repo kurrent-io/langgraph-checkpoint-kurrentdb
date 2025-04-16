@@ -15,6 +15,7 @@ from langgraph.checkpoint.base import (
     SerializerProtocol,
     get_checkpoint_id
 )
+import random
 from langgraph_checkpoint_kurrentdb.tracing import export_tree_otel
 from kurrentdbclient import KurrentDBClient, AsyncKurrentDBClient, NewEvent, StreamState, exceptions
 from collections import defaultdict
@@ -71,7 +72,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             if ("channel_values" in checkpoint and "keys" in checkpoint["channel_values"]
                     and "channel_versions" in checkpoint):
                 keys = checkpoint["channel_values"].pop("keys")
-                versions = checkpoint["channel_versions"]
+                versions = checkpoint["channel_versions_kdb"]
 
             channel_values = {}
             metadata = self.jsonplus_serde.loads(event.metadata)
@@ -148,7 +149,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             if ("channel_values" in checkpoint and "keys" in checkpoint["channel_values"]
                     and "channel_versions" in checkpoint):
                 keys = checkpoint["channel_values"].pop("keys")
-                versions = checkpoint["channel_versions"]
+                versions = checkpoint["channel_versions_kdb"]
 
             channel_values = {}
             for key in keys:
@@ -252,22 +253,12 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 if key not in c["channel_versions"]:
                     c["channel_versions"][key] = 0
 
-            self.breakdown_channel_values(thread_id, c["channel_values"], c["channel_versions"], checkpoint_ns)
+            new_channel_version, new_versions_seen = self.breakdown_channel_values(thread_id, c["channel_values"], c["channel_versions"], checkpoint_ns)
             c["channel_values"] = {}  # empty dict
-            # rename channel versions to stream names
-            new_channel_version = {}
-            for key in c["channel_versions"]:
-                stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
-                new_channel_version[stream_name] = c["channel_versions"][key]
-            new_versions_seen = {}
-            if "versions_seen" in c:
-                for key in c["versions_seen"]:
-                    stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
-                    new_versions_seen[stream_name] = c["versions_seen"][key]
-
-            c["versions_seen"] = new_versions_seen
-            c["channel_versions"] = new_channel_version
             c["channel_values"]["keys"] = channel_keys
+            c["versions_seen_kdb"] = new_versions_seen
+            c["channel_versions_kdb"] = new_channel_version
+
         serialized_checkpoint = self.jsonplus_serde.dumps(c)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
 
@@ -334,14 +325,13 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 backwards=True
             )
             async for event in await checkpoints_events:
-                print(event)
                 checkpoint = self.jsonplus_serde.loads(event.data)
                 keys = []
                 versions = []
                 if ("channel_values" in checkpoint and "keys" in checkpoint["channel_values"]
                         and "channel_versions" in checkpoint):
                     keys = checkpoint["channel_values"].pop("keys")
-                    versions = checkpoint["channel_versions"]
+                    versions = checkpoint["channel_versions_kdb"]
 
                 channel_values = {}
                 metadata = self.jsonplus_serde.loads(event.metadata)
@@ -424,12 +414,12 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
             if ("channel_values" in checkpoint and "keys" in checkpoint["channel_values"]
                     and "channel_versions" in checkpoint):
                 keys = checkpoint["channel_values"].pop("keys")
-                versions = checkpoint["channel_versions"]
+                versions = checkpoint["channel_versions_kdb"]
 
             channel_values = {}
             for key in keys:
                 channel_values[self.breakdown_channel_stream_name(key)] = (
-                    self.get_channel_value(key, versions, thread_id, checkpoint["id"], checkpoint["id"]))
+                    self.get_channel_value_async(key, versions, thread_id, checkpoint["id"], checkpoint["id"]))
             checkpoint["channel_values"] = channel_values
             parent_checkpoint_id = None
             checkpoint_ns = ""
@@ -528,22 +518,13 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 if key not in c["channel_versions"]:
                     c["channel_versions"][key] = 0
 
-            self.breakdown_channel_values_async(thread_id, c["channel_values"], c["channel_versions"], checkpoint_ns)
+            new_channel_version, new_versions_seen = await self.breakdown_channel_values_async(thread_id, c["channel_values"],
+                                                                                   c["channel_versions"], checkpoint_ns)
             c["channel_values"] = {}  # empty dict
-            # rename channel versions to stream names
-            new_channel_version = {}
-            for key in c["channel_versions"]:
-                stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
-                new_channel_version[stream_name] = c["channel_versions"][key]
-            new_versions_seen = {}
-            if "versions_seen" in c:
-                for key in c["versions_seen"]:
-                    stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
-                    new_versions_seen[stream_name] = c["versions_seen"][key]
-
-            c["versions_seen"] = new_versions_seen
-            c["channel_versions"] = new_channel_version
             c["channel_values"]["keys"] = channel_keys
+            c["versions_seen_kdb"] = new_versions_seen
+            c["channel_versions_kdb"] = new_channel_version
+
         serialized_checkpoint = self.jsonplus_serde.dumps(c)
         serialized_metadata = self.jsonplus_serde.dumps(metadata)
 
@@ -583,48 +564,97 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                                  channel_values: dict[str, Any],
                                  channel_versions: dict[str, str],
                                  checkpoint_ns: str = None):
+        new_channel_version = {}
+        new_channel_seen = {}
         if self.client is not None:
             # executing synchronously
             for key in channel_values:
                 serialized_value = self.jsonplus_serde.dumps(channel_values[key])
                 stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
+                metadata = self.jsonplus_serde.dumps({"langgraph_version":channel_versions[key]})
                 checkpoint_event = NewEvent(
                     type="channel_value",
                     data=serialized_value,
                     content_type='application/json',
+                    metadata=metadata
                 )
-
+                next_version = 0
+                new_channel_seen[stream_name] = -1
+                try:
+                    events = self.client.get_stream(stream_name=f"{stream_name}", resolve_links=False, backwards=True, limit=2)
+                except kurrentdbclient.exceptions.NotFound as e:
+                    pass
+                else:
+                    if len(events) == 2:
+                        new_channel_seen[stream_name] = events[0].stream_position
+                        next_version = events[1].stream_position + 1
+                    if len(events) == 1:
+                        new_channel_seen[stream_name] = 0
+                        next_version = events[0].stream_position + 1
+                    for event in events:
+                        next_version = event.stream_position + 1
+                        break
                 self.client.append_to_stream(
                     stream_name=f"{stream_name}",
                     events=[checkpoint_event],
                     current_version=StreamState.ANY #conflict resolution done on Python side
                 )
-    def breakdown_channel_values_async(self, thread_id,
+                new_channel_version[stream_name] = next_version
+            return new_channel_version, new_channel_seen
+
+    async def breakdown_channel_values_async(self, thread_id,
                                  channel_values: dict[str, Any],
                                  channel_versions: dict[str, str],
                                  checkpoint_ns: str = None):
+        new_channel_version = {}
+        new_channel_seen = {}
         if self.async_client is not None:
-            # executing synchronously
+            # executing asynchronously
             for key in channel_values:
                 serialized_value = self.jsonplus_serde.dumps(channel_values[key])
                 stream_name = self.build_channel_stream_name(thread_id, key, checkpoint_ns)
+                metadata = self.jsonplus_serde.dumps({"langgraph_version": channel_versions[key]})
                 checkpoint_event = NewEvent(
                     type="channel_value",
                     data=serialized_value,
                     content_type='application/json',
+                    metadata=metadata
                 )
-
-                self.async_client.append_to_stream(
+                next_version = 0
+                new_channel_seen[stream_name] = -1
+                try:
+                    reads = await self.async_client.get_stream(stream_name=f"{stream_name}", resolve_links=False, backwards=True,
+                                                    limit=2)
+                except kurrentdbclient.exceptions.NotFound as e:
+                    pass
+                else:
+                    events = reads
+                    # for event in reads:
+                    #     events.append(event)
+                    if len(events) == 2:
+                        new_channel_seen[stream_name] = events[0].stream_position
+                        next_version = events[1].stream_position + 1
+                    if len(events) == 1:
+                        new_channel_seen[stream_name] = 0
+                        next_version = events[0].stream_position + 1
+                    for event in events:
+                        next_version = event.stream_position + 1
+                        break
+                await self.async_client.append_to_stream(
                     stream_name=f"{stream_name}",
                     events=[checkpoint_event],
-                    current_version=StreamState.ANY #conflict resolution done on Python side
-                ).__await__()
+                    current_version=StreamState.ANY  # conflict resolution done on Python side
+                )
+                new_channel_version[stream_name] = next_version
+            return new_channel_version, new_channel_seen
+
 
     def get_channel_value(self, channel_name: str, channel_versions, thread_id: str, checkpoint_ns: str, checkpoint_id: str):
         if self.client is not None:
             expected_position = 0
             if channel_name in channel_versions:
-                expected_position = int(channel_versions[channel_name])
+                if isinstance(channel_versions[channel_name], int):
+                    expected_position = channel_versions[channel_name]
             stream_name = channel_name
 
             #get latest write from pending writes if present
@@ -652,7 +682,8 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         if self.async_client is not None:
             expected_position = 0
             if channel_name in channel_versions:
-                expected_position = int(channel_versions[channel_name])
+                if isinstance(channel_versions[channel_name], int):
+                    expected_position = channel_versions[channel_name]
             stream_name = channel_name
 
             #get latest write from pending writes if present
@@ -697,78 +728,73 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
         Returns:
             str: The next version identifier is based on the next expected version in KurrentDB.
         """
-        events = []
-        try:
-            channel_stream_name = channel.checkpoint()
-            if self.client is not None:
-                events = self.client.read_stream(channel_stream_name, resolve_links=True, backwards=True, limit=1)
-            if self.async_client is not None:
-                events = self.async_client.read_stream(channel_stream_name, resolve_links=True, backwards=True, limit=1).__await__()
-            for event in events:
-                return str(event.stream_position + 1)
-        except EmptyChannelError:
-            return str(0)
-        except kurrentdbclient.exceptions.NotFound:
-            return str(0)
-        return str(0)
+        if current is None:
+            current_v = 0
+        elif isinstance(current, int):
+            current_v = current
+        else:
+            current_v = int(current.split(".")[0])
+        next_v = current_v + 1
+        next_h = random.random()
+        return f"{next_v:032}.{next_h:016}"
 
-    def export_trace(self, thread_id: str, span_processor, trace):
-        if self.client is None:
-            raise Exception("Synchronous Client is required.")
+def export_trace(self, thread_id: str, span_processor, trace):
+    if self.client is None:
+        raise Exception("Synchronous Client is required.")
 
-        # try:
-        checkpoints_events = self.client.get_stream(
-            stream_name="thread-" + str(thread_id),
-            resolve_links=True,
-            backwards=False  # read forwards
-        )
-        execution_times = []
-        previous_seen = None
-        previous_time = None
-        previous_step = None
-        for event in checkpoints_events:
-            if previous_time is None: #first event
-                previous_time = event.recorded_at
+    # try:
+    checkpoints_events = self.client.get_stream(
+        stream_name="thread-" + str(thread_id),
+        resolve_links=True,
+        backwards=False  # read forwards
+    )
+    execution_times = []
+    previous_seen = None
+    previous_time = None
+    previous_step = None
+    for event in checkpoints_events:
+        if previous_time is None:  # first event
+            previous_time = event.recorded_at
 
-            checkpoint = self.jsonplus_serde.loads(event.data)
-            metadata = self.jsonplus_serde.loads(event.metadata)
-            if previous_step is None:
-                previous_step = metadata["step"]
-            tree = "root"
-            ns = ""
-            if "langgraph_checkpoint_ns" in metadata and "langgraph_node" in metadata:
-                ns = metadata["langgraph_checkpoint_ns"]
-                tree = metadata["langgraph_node"]
+        checkpoint = self.jsonplus_serde.loads(event.data)
+        metadata = self.jsonplus_serde.loads(event.metadata)
+        if previous_step is None:
+            previous_step = metadata["step"]
+        tree = "root"
+        ns = ""
+        if "langgraph_checkpoint_ns" in metadata and "langgraph_node" in metadata:
+            ns = metadata["langgraph_checkpoint_ns"]
+            tree = metadata["langgraph_node"]
 
-            if "channel_versions" in checkpoint:
-                if previous_seen == None: #this is the first step
-                    previous_seen = {}
+        if "channel_versions" in checkpoint:
+            if previous_seen == None:  # this is the first step
+                previous_seen = {}
 
-                added_node = {}
-                for el in checkpoint["channel_versions"]:
-                    if el not in previous_seen or checkpoint["channel_versions"][el] != previous_seen[el]:
-                        node_name = ""
-                        if "writes" in metadata:
-                            if metadata["writes"] is None:
-                                node_name = metadata["source"]
-                            else:
-                                for key in metadata["writes"]:
-                                    node_name = key
-                                    break
+            added_node = {}
+            for el in checkpoint["channel_versions"]:
+                if el not in previous_seen or checkpoint["channel_versions"][el] != previous_seen[el]:
+                    node_name = ""
+                    if "writes" in metadata:
+                        if metadata["writes"] is None:
+                            node_name = metadata["source"]
                         else:
-                            continue
-                        if node_name in added_node:
-                            continue
-                        added_node[node_name] = True
-                        delta = (event.recorded_at - previous_time)
-                        time_taken = delta.seconds * 1000 + delta.microseconds // 1000
-                        execution_times.append((tree, metadata["step"], event.recorded_at, node_name, time_taken, ns))
-                        previous_seen[el] = checkpoint["channel_versions"][el]
-            if metadata["step"] != previous_step:
-                previous_step = metadata["step"]
-                previous_time = event.recorded_at
+                            for key in metadata["writes"]:
+                                node_name = key
+                                break
+                    else:
+                        continue
+                    if node_name in added_node:
+                        continue
+                    added_node[node_name] = True
+                    delta = (event.recorded_at - previous_time)
+                    time_taken = delta.seconds * 1000 + delta.microseconds // 1000
+                    execution_times.append((tree, metadata["step"], event.recorded_at, node_name, time_taken, ns))
+                    previous_seen[el] = checkpoint["channel_versions"][el]
+        if metadata["step"] != previous_step:
+            previous_step = metadata["step"]
+            previous_time = event.recorded_at
 
-        export_tree_otel(thread_id, execution_times, span_processor, trace)
+    export_tree_otel(thread_id, execution_times, span_processor, trace)
 
     def set_max_count(self, max_count: int, thread_id: int) -> None:
         raise NotImplementedError()

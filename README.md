@@ -12,7 +12,37 @@ LangGraph is an orchestration framework for complex agentic systems.
 This package provides a checkpointing mechanism for LangGraph using KurrentDB.
 We use KurrentDB's event sourcing capabilities to store the state of the LangGraph execution.
 The versioning of state is mapped to KurrentDB's native event versioning and every the channel value is kept into its own stream.
-Every step in the thread then only has a pointer (channel value name and version) to the actual channel value (event).
+Every step in the thread then only has a pointer (channel value name and version) to the actual channel value (event). 
+(Original Langgraph's channel versioning is also kept)
+
+```mermaid
+graph TD
+  subgraph ThreadStream["Thread's Stream"]
+    Step1["Step -1 (event)"]
+    Step2["Step 0 (event)"]
+    Step3["Step 1... (event)"]
+  end
+
+  subgraph ChannelValueStreams["Channel Value Streams"]
+    ChannelA["Channel A"]
+    ChannelB["Channel B"]
+    ChannelC["Channel C"]
+  end
+
+  subgraph ChannelValueEvents["Channel A Value Events"]
+    Event0["Event V0"]
+    Event1["Event V1"]
+    Event2["Event V2..."]
+  end
+
+  Step1 -->|Points to| ChannelA
+  Step1 -->|Points to| ChannelB
+  Step2 -->|Points to| ChannelB
+  Step2 -->|Points to| ChannelC
+  Step3 -->|Points to| ChannelA
+  Step3 -->|Points to| ChannelC
+  ChannelA -->|Points to| ChannelValueEvents
+```
 
 ## Installation
 
