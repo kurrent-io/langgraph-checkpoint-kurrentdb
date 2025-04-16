@@ -78,3 +78,4 @@ def export_tree_otel(thread_id, data, span_processor, trace):
                 if head["label"] + child_node["label"] not in traversed:
                     traversal.append((child_node, level + 1, parent_ctx))
 
+    root_span.end()
