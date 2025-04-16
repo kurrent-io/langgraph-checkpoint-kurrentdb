@@ -64,7 +64,7 @@ def export_tree_otel(thread_id, data, span_processor, trace):
         end_time = start_time_unix_nano + duration_nano
 
         #enrich child span
-        child_span = tracer.start_span(head["label"] + ":" + head["label"], context=ctx, start_time=start_time_unix_nano)
+        child_span = tracer.start_span(head["source"] + ":" + head["label"], context=ctx, start_time=start_time_unix_nano)
         child_span.set_attribute("source", head["source"])
         child_span.set_attribute("label", head["label"])
         child_span.set_attribute("step", head["step"])
