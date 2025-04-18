@@ -1,5 +1,4 @@
 import kurrentdbclient
-from langgraph.checkpoint.base import EmptyChannelError
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, Optional, Sequence, Tuple
 from langchain_core.runnables import RunnableConfig
@@ -63,7 +62,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 resolve_links=True,
                 backwards=True
             )
-        except exceptions.NotFound as e:
+        except exceptions.NotFoundError as e:
             return None #no checkpoint found
         for event in checkpoints_events:
             checkpoint = self.jsonplus_serde.loads(event.data)
@@ -380,7 +379,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                                 ],
                             )
                     break
-        except exceptions.NotFound:
+        except exceptions.NotFoundError:
             pass
 
         return result
@@ -582,7 +581,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 new_channel_seen[stream_name] = -1
                 try:
                     events = self.client.get_stream(stream_name=f"{stream_name}", resolve_links=False, backwards=True, limit=2)
-                except kurrentdbclient.exceptions.NotFound as e:
+                except kurrentdbclient.exceptions.NotFoundError as e:
                     pass
                 else:
                     if len(events) == 2:
@@ -625,7 +624,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                 try:
                     reads = await self.async_client.get_stream(stream_name=f"{stream_name}", resolve_links=False, backwards=True,
                                                     limit=2)
-                except kurrentdbclient.exceptions.NotFound as e:
+                except kurrentdbclient.exceptions.NotFoundError as e:
                     pass
                 else:
                     events = reads
@@ -674,7 +673,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                                                  limit=1)
                 for event in events:
                     return self.jsonplus_serde.loads(event.data)
-            except kurrentdbclient.exceptions.NotFound as e:
+            except kurrentdbclient.exceptions.NotFoundError as e:
                 return None
         return None
 
@@ -703,7 +702,7 @@ class KurrentDBSaver(BaseCheckpointSaver[str]):
                                                  limit=1).__await__()
                 for event in events:
                     return self.jsonplus_serde.loads(event.data)
-            except kurrentdbclient.exceptions.NotFound as e:
+            except kurrentdbclient.exceptions.NotFoundError as e:
                 return None
         return None
 
