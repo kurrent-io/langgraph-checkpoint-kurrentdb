@@ -1,6 +1,3 @@
-# Format a single tree line
-import datetime
-from xml.etree.ElementTree import indent
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.resources import Resource
 

@@ -17,7 +17,7 @@ class MockClient:
     def get_stream(self, stream_name, **kwargs):
         self._track_call("get_stream", stream_name=stream_name, **kwargs)
         if "get_stream" in self.fail_on:
-            raise exceptions.NotFound(f"Stream {stream_name} not found")
+            raise exceptions.NotFoundError(f"Stream {stream_name} not found")
         elif "error_stream" in stream_name:
             raise exceptions.ConnectionFailed("Mock connection failure")
         elif "empty_stream" in stream_name:
@@ -85,11 +85,11 @@ def sample_metadata():
 
 # Tests for error handling
 def test_notfound_exception_handling(mock_saver, base_config):
-    """Test that NotFound exceptions are properly handled in get_tuple"""
+    """Test that NotFoundError exceptions are properly handled in get_tuple"""
     config_error = {"configurable": {"thread_id": "non_existent_thread", "checkpoint_ns": ""}}
 
     # self.client should raise exception notfound and then return None
-    with patch.object(mock_saver.client, 'get_stream', side_effect=exceptions.NotFound("Stream not found")):
+    with patch.object(mock_saver.client, 'get_stream', side_effect=exceptions.NotFoundError("Stream not found")):
         result = mock_saver.get_tuple(config_error)
         assert result is None
 
