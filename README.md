@@ -56,6 +56,9 @@ Or using Poetry:
 poetry add langgraph-checkpoint-kurrentdb
 ```
 
+## KurrentDB
+- $Streams and $by_category System projections need to enabled
+
 ## Usage
 
 Setting up the KurrentDB checkpointer for your LangGraph:
